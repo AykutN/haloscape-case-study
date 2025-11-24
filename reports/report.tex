@@ -1,0 +1,244 @@
+\documentclass[12pt, a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{geometry}
+\usepackage{float}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{caption}
+\usepackage{subcaption}
+
+\geometry{margin=2.5cm}
+
+% Code snippet styling
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+\lstdefinestyle{mystyle}{
+    backgroundcolor=\color{backcolour},   
+    commentstyle=\color{codegray},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,         
+    breaklines=true,                 
+    captionpos=b,                    
+    keepspaces=true,                 
+    numbers=left,                    
+    numbersep=5pt,                  
+    showspaces=false,                
+    showstringspaces=false,
+    showtabs=false,                  
+    tabsize=2
+}
+\lstset{style=mystyle}
+
+\title{\textbf{HaloScape Recruitment Case: \\ Comprehensive Analysis of CNN vs. Vision Transformer for Brain Tumor Classification}}
+\author{Yusuf Aykut}
+\date{\today}
+
+\begin{document}
+
+\begin{center}
+    \includegraphics[width=0.25\textwidth]{halo.png}
+\end{center}
+
+\maketitle
+
+\begin{abstract}
+This report presents a comparative study between a Convolutional Neural Network (ResNet-18) and a Vision Transformer (DeiT-Tiny) for the classification of brain tumors from MRI scans. To ensure scientific rigor, we implemented a Visual Similarity Clustering split to prevent patient-level data leakage. Beyond standard accuracy metrics, we conduct a comprehensive efficiency analysis, measuring FLOPs, parameter count, and inference latency on Apple M3 Max hardware. Our findings reveal that ResNet-18 outperforms DeiT-Tiny in both accuracy (90.2\% vs 87.1\%) and inference speed (2.75ms vs 3.37ms), demonstrating the strength of CNN inductive bias for medical imaging with limited data.
+\end{abstract}
+
+\section{Introduction}
+Deep learning has revolutionized medical image analysis. However, the choice of architecture involves a trade-off between accuracy, model size, and inference speed. This study evaluates two paradigms:
+\begin{itemize}
+    \item \textbf{ResNet-18 (CNN):} Represents the standard, convolution-based approach known for its inductive bias towards local features.
+    \item \textbf{DeiT-Tiny (ViT):} Represents the modern, attention-based approach that captures global context but typically requires more data or strong regularization.
+\end{itemize}
+
+\section{Methodology}
+
+\subsection{Dataset and Preprocessing}
+The dataset comprises MRI scans classified into four classes: \textit{glioma}, \textit{meningioma}, \textit{no tumor}, and \textit{pituitary}.
+\begin{itemize}
+    \item \textbf{Preprocessing:} Images were resized to $224 \times 224$ and converted from grayscale to 3-channel RGB. \textbf{Why RGB for MRI?} While MRI scans are inherently grayscale, our models were pretrained on ImageNet (natural RGB images). To leverage these weights, we replicate the grayscale intensity across all three channels. This enables transfer learning from low-level edge/texture detectors learned on ImageNet to medical imaging, significantly improving convergence speed and final accuracy compared to training from scratch.
+    \item \textbf{Class Imbalance:} The \textit{no tumor} class was significantly underrepresented (~395 samples vs ~820 for others). We addressed this by implementing a \textbf{Weighted Cross-Entropy Loss}, where weights were calculated as $W_c = \frac{N}{C \times N_c}$ (inverse frequency).
+\end{itemize}
+
+\subsection{Training Strategy}
+To ensure a fair comparison, both models were trained under identical conditions:
+\begin{itemize}
+    \item \textbf{Optimizer:} AdamW (Learning Rate: $1e-4$, Weight Decay: $0.01$).
+    \item \textbf{Scheduler:} StepLR (Gamma: 0.1, Step Size: 7 epochs).
+    \item \textbf{Epochs:} 30 epochs with Early Stopping logic.
+    \item \textbf{Regularization:} We used \textit{Partial Fine-tuning}, freezing the early feature extraction layers and training only the final blocks and classification heads.
+\end{itemize}
+
+\subsection{Efficiency Analysis Protocol}
+A key contribution of this study is the rigorous measurement of model efficiency. We implemented a custom profiling script (\texttt{src/efficiency.py}) using the following methodology:
+
+\subsubsection{FLOPs and Parameters}
+We used the \texttt{thop} (PyTorch-OpCounter) library to calculate the theoretical Floating Point Operations (FLOPs).
+\begin{lstlisting}[language=Python, caption=FLOPs Calculation Code Snippet]
+from thop import profile
+dummy_input = torch.randn(1, 3, 224, 224).to(device)
+flops, params = profile(model, inputs=(dummy_input,))
+\end{lstlisting}
+
+\subsubsection{Latency and Throughput}
+Theoretical FLOPs often do not correlate perfectly with real-world speed due to memory bandwidth constraints. We measured \textbf{Latency} (time per image) and \textbf{Throughput} (images per second) on an \textbf{Apple MacBook M3 Max} using Metal Performance Shaders (MPS). The protocol was:
+\begin{enumerate}
+    \item \textbf{Warmup:} Run 10 inference passes to initialize GPU caches.
+    \item \textbf{Measurement:} Execute 100 inference passes with a single image ($1 \times 3 \times 224 \times 224$) and measure total time.
+    \item \textbf{Metrics:} Calculate average latency (ms/image) and throughput (images/sec).
+\end{enumerate}
+This methodology isolates model inference time from data loading overhead, providing accurate real-world deployment estimates.
+\subsection{Data Splitting Strategy (Anti-Leakage)}
+A critical challenge in medical imaging is \textbf{patient-level data leakage}. The provided dataset contains individual MRI slices without patient identifiers. If adjacent slices from the same patient are distributed across Train and Test sets, models can learn patient-specific features (e.g., skull shape) rather than tumor pathology, leading to optimistically biased accuracy.
+
+\textbf{Detection:} We first validated this concern by implementing a visual similarity checker (\texttt{src/check\_leakage.py}) using Mean Squared Error (MSE) between test and training images. The analysis revealed MSE values of 0.000000 for multiple pairs, confirming that nearly identical slices existed across splits.
+
+\textbf{Solution - Visual Similarity Clustering:} We implemented a three-stage pipeline:
+\begin{enumerate}
+    \item \textbf{Feature Extraction:} For each image, we computed a compact perceptual hash by downsampling to $8 \times 8$ grayscale and flattening to a 64-dimensional vector.
+    \item \textbf{Clustering:} We applied Agglomerative Clustering with average linkage and a Euclidean distance threshold of 2.0 (empirically calibrated to group visually similar slices). This identified 1,487 unique clusters from 2,870 images.
+    \item \textbf{Group-Level Split:} Instead of splitting images randomly, we split clusters. All images within a cluster were assigned to the same set (Train, Val, or Test) using an 80/10/10 ratio. This ensures that if a patient's slice appears in Test, no similar slices from that patient exist in Train.
+\end{enumerate}
+
+This approach mimics a true patient-level split without requiring metadata, ensuring our reported accuracy reflects real-world generalization.
+
+\subsection{Data Augmentation}
+To prevent overfitting and improve generalization, we applied a robust augmentation pipeline:
+\begin{itemize}
+    \item \textbf{Random Horizontal Flip:} Anatomical symmetry.
+    \item \textbf{Random Rotation ($\pm 10^\circ$):} Head positioning variations.
+    \item \textbf{Color Jitter:} Subtle brightness/contrast changes to simulate scanner differences.
+\end{itemize}
+
+\subsection{Model Architectures & Training Strategy}
+We compared two architectures:
+\begin{enumerate}
+    \item \textbf{ResNet-18:} A CNN with residual connections, known for strong inductive bias for local features.
+    \item \textbf{DeiT-Tiny:} A Vision Transformer that processes images as $16 \times 16$ patches using self-attention.
+\end{enumerate}
+
+\textbf{Training Configuration:}
+\begin{itemize}
+    \item \textbf{Transfer Learning:} Both models initialized with ImageNet-pretrained weights.
+    \item \textbf{Freeze Strategy (Partial Fine-tuning):}
+    \begin{itemize}
+        \item \textbf{ResNet-18:} Froze early layers (\texttt{conv1}, \texttt{bn1}, \texttt{layer1}, \texttt{layer2}), fine-tuned deeper layers (\texttt{layer3}, \texttt{layer4}) and classification head.
+        \item \textbf{DeiT-Tiny:} Froze patch embeddings and first 8 transformer blocks, fine-tuned last 4 blocks and classification head.
+    \end{itemize}
+    This preserves low-level ImageNet features while adapting high-level representations to brain tumor pathology.
+    \item \textbf{Optimizer:} AdamW ($lr=1e-4$, $wd=0.01$).
+    \item \textbf{Epochs:} 30 with early stopping.
+    \item \textbf{Loss:} Weighted Cross-Entropy (to handle class imbalance).
+    \item \textbf{Constraint:} Input size fixed at $224 \times 224$. Larger inputs would increase DeiT's quadratic attention cost significantly on consumer hardware (M3 Max).
+\end{itemize}
+
+\section{Results}
+
+\subsection{Training Dynamics}
+The training curves for both models are presented below. 
+
+\begin{figure}[H]
+    \centering
+    \begin{subfigure}[b]{0.48\textwidth}
+        \includegraphics[width=\textwidth]{resnet_curves.png}
+        \caption{ResNet-18 Training Curves}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.48\textwidth}
+        \includegraphics[width=\textwidth]{deit_curves.png}
+        \caption{DeiT-Tiny Training Curves}
+    \end{subfigure}
+    \caption{Training and Validation Loss/Accuracy.}
+    \label{fig:curves}
+\end{figure}
+
+\textbf{Discussion:} As seen in Figure \ref{fig:curves}, both models converge well with the augmented data and smart split. ResNet-18 achieves slightly higher validation accuracy throughout training, demonstrating the effectiveness of CNN inductive bias on this dataset size. DeiT-Tiny exhibits stable learning, though its final accuracy is constrained by the limited training data (~2,300 images), which is typically insufficient for Transformers to fully exploit their global attention mechanism.
+
+\subsection{Quantitative Performance}
+The results on the rigorously split Test set are summarized below:
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lcc}
+\toprule
+\textbf{Metric} & \textbf{ResNet-18} & \textbf{DeiT-Tiny} \\
+\midrule
+Test Accuracy & \textbf{90.2\%} & 87.1\% \\
+Test F1-Score (Macro) & \textbf{0.90} & 0.87 \\
+Validation Accuracy (Best) & \textbf{87.2\%} & 84.8\% \\
+\bottomrule
+\end{tabular}
+\caption{Performance comparison. ResNet-18 outperforms DeiT-Tiny in this rigorous setup.}
+\label{tab:results}
+\end{table}
+
+\textbf{Observation:} Contrary to our initial pilot, \textbf{ResNet-18} achieved higher accuracy. This suggests that with proper data augmentation and a rigorous split, the CNN's inductive bias (locality) is extremely beneficial for this small-scale MRI dataset (approx. 3000 images). DeiT, while performing well (87%), likely requires more data to fully leverage its global attention mechanism.
+
+\subsection{Error Analysis (Confusion Matrices)}
+To understand \textit{where} the models fail, we analyze the Confusion Matrices on the Test set.
+
+\begin{figure}[H]
+    \centering
+    \begin{subfigure}[b]{0.48\textwidth}
+        \includegraphics[width=\textwidth]{resnet_cm.png}
+        \caption{ResNet-18 Confusion Matrix}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.48\textwidth}
+        \includegraphics[width=\textwidth]{deit_cm.png}
+        \caption{DeiT-Tiny Confusion Matrix}
+    \end{subfigure}
+    \caption{Confusion Matrices on Test Set.}
+    \label{fig:cm}
+\end{figure}
+
+\textbf{Discussion:} Both models achieve strong diagonal values, indicating high per-class recall. ResNet-18's superior overall accuracy (90.2\%) demonstrates that its localized feature extraction is well-suited for identifying tumor boundaries and textures in MRI scans. The slightly lower performance of DeiT-Tiny (87.1\%) suggests that with limited training data, the global attention mechanism may struggle to outweigh the benefits of CNN's spatial inductive bias for this specific medical imaging task.
+
+\subsection{Efficiency Analysis}
+Measured on Apple MacBook M3 Max (MPS):
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lcc}
+\toprule
+\textbf{Metric} & \textbf{ResNet-18} & \textbf{DeiT-Tiny} \\
+\midrule
+Total Parameters & 11.2 M & \textbf{5.5 M} \\
+FLOPs (Giga) & 1.82 G & \textbf{1.08 G} \\
+Latency (Avg) & \textbf{2.75 ms} & 3.37 ms \\
+Throughput & \textbf{363 img/sec} & 296 img/sec \\
+\bottomrule
+\end{tabular}
+\caption{Efficiency comparison.}
+\label{tab:efficiency}
+\end{table}
+
+\section{Comparative Interpretation}
+
+\subsection{Accuracy vs. Inductive Bias}
+ResNet-18's victory (90.2\% vs 87.1\%) highlights the importance of \textbf{Inductive Bias} when data is limited. The CNN's built-in assumption that "pixels close to each other are related" is perfectly suited for medical imaging where local textures (tumor boundaries) are key. Transformers learn this relationship from scratch, which is harder with only ~2000 training images.
+
+\subsection{Impact of Preprocessing}
+The "Smart Split" ensured we weren't cheating, and the Augmentations provided the necessary variety. ResNet utilized these augmentations effectively to learn robust features.
+
+\subsection{Size vs. Speed Trade-off}
+\textbf{Why is the 'smaller' model slower?}
+As discussed, DeiT has fewer parameters (5.5M vs 11.2M) but is slower (3.37ms vs 2.75ms) due to the memory-bandwidth-intensive Self-Attention mechanism, which is less cache-friendly on the M3 Max GPU compared to optimized Convolutions.
+
+\section{Limitations}
+Although we implemented Visual Similarity Clustering to mitigate leakage, a true patient-level split using metadata would be the gold standard.
+
+\section{Conclusion}
+In this rigorous study comparing ResNet-18 and DeiT-Tiny for Brain Tumor Classification:
+
+\begin{itemize}
+    \item \textbf{ResNet-18 is the Winner:} It offers superior Accuracy (\textbf{90.2\%}) AND faster Inference (\textbf{2.75 ms}). For this specific task and dataset size, the CNN architecture is the optimal choice.
+    \item \textbf{DeiT-Tiny is a Strong Contender:} Achieving 87.1\% accuracy with half the parameters is impressive, but its theoretical efficiency doesn't translate to speed on standard hardware, and it craves more data.
+\end{itemize}
+
+\textbf{Recommendation:} For deployment in a clinical support system, we recommend \textbf{ResNet-18} due to its robustness, speed, and higher diagnostic accuracy in this data regime.
+\end{document}

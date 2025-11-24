@@ -1,0 +1,48 @@
+# Data
+data/
+*.csv
+
+# Model Weights
+*.pth
+*.pt
+*.ckpt
+models/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# Jupyter
+.ipynb_checkpoints
+*.ipynb
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Reports (keep only source files, not generated artifacts)
+reports/*.png
+reports/**/*.png
+*.pdf
+
+# Logs
+*.log
+
+# Analysis outputs (optional, keep if small)
+# analysis/

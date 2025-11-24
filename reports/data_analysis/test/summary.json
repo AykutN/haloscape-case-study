@@ -1,0 +1,19 @@
+{
+    "total_images": 394,
+    "classes": [
+        "glioma_tumor",
+        "meningioma_tumor",
+        "no_tumor",
+        "pituitary_tumor"
+    ],
+    "class_counts": {
+        "glioma_tumor": 100,
+        "meningioma_tumor": 115,
+        "no_tumor": 105,
+        "pituitary_tumor": 74
+    },
+    "image_modes": {
+        "RGB": 200
+    },
+    "analysis_dir": "/Users/y.aykut/Codebase/resnet_transformer_comparing/reports/data_analysis/test"
+}
