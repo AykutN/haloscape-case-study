@@ -1,48 +1,24 @@
-# Data
+# Python cache
+__pycache__/
+*.pyc
+
+# Veri klasörleri - ÇOK ÖNEMLİ
 data/
+
+# Kaydedilmiş modeller (.pth dosyaları büyük olabilir)
+*.pth
+
+# Oluşturulan raporlar ve analizler
+analysis/
+reports/
+*.pdf
+*.tex
+*.png
+*.json
 *.csv
 
-# Model Weights
-*.pth
-*.pt
-*.ckpt
-models/
-
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-env/
-venv/
-.venv/
-*.egg-info/
-dist/
-build/
-
-# Jupyter
-.ipynb_checkpoints
-*.ipynb
-
-# IDEs
+# IDE ve OS dosyaları
 .vscode/
 .idea/
-*.swp
-*.swo
-*~
-
-# OS
 .DS_Store
-Thumbs.db
 
-# Reports (keep only source files, not generated artifacts)
-reports/*.png
-reports/**/*.png
-*.pdf
-
-# Logs
-*.log
-
-# Analysis outputs (optional, keep if small)
-# analysis/
